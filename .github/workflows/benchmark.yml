@@ -1,0 +1,32 @@
+name: Review Quality Benchmark
+
+# Runs the agents against eval/cases (seeded bugs) and fails if recall drops,
+# so prompt or model changes can't silently make reviews worse.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "services/orchestrator/graph.py"
+      - "services/orchestrator/llm.py"
+      - "eval/**"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r services/orchestrator/requirements.txt
+      - name: Run benchmark
+        if: env.OPENAI_API_KEY != ''
+        run: python scripts/benchmark.py --min-recall 0.75 --output benchmark-results.json
+      - uses: actions/upload-artifact@v4
+        if: always() && env.OPENAI_API_KEY != ''
+        with:
+          name: benchmark-results
+          path: benchmark-results.json

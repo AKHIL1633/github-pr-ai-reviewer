@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   evaluate:
+    # Runs inside the EKS cluster, so it is skipped until DEPLOY_ENABLED=true (see docs/SETUP.md).
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

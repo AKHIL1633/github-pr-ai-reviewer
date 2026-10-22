@@ -1,0 +1,90 @@
+# Full stack on one machine: `docker compose up --build`
+# Add `--profile monitoring` for Prometheus (localhost:9090) and Grafana (localhost:3000).
+# Secrets come from .env (copy .env.example).
+
+x-app: &app
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+asyncpg://reviewer:reviewer@postgres:5432/codereviewer
+    REDIS_URL: redis://redis:6379/0
+  restart: unless-stopped
+
+x-after-migrate: &after-migrate
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_started
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: reviewer
+      POSTGRES_PASSWORD: reviewer
+      POSTGRES_DB: codereviewer
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviewer -d codereviewer"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  migrate:
+    <<: *app
+    build: { context: ., dockerfile: services/webhook/Dockerfile }
+    working_dir: /db
+    command: ["alembic", "-c", "/db/alembic.ini", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    <<: *app
+    build: { context: ., dockerfile: services/gateway/Dockerfile }
+    ports: ["8000:8000"]
+    depends_on: [webhook]
+
+  webhook:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/webhook/Dockerfile }
+
+  webhook-worker:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/webhook/Dockerfile }
+    command: ["celery", "-A", "worker", "worker", "--loglevel=info", "-Q", "webhook"]
+
+  orchestrator:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/orchestrator/Dockerfile }
+
+  reviewer:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/reviewer/Dockerfile }
+
+  learner:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/learner/Dockerfile }
+
+  learner-worker:
+    <<: [*app, *after-migrate]
+    build: { context: ., dockerfile: services/learner/Dockerfile }
+    command: ["celery", "-A", "worker", "worker", "--loglevel=info", "-Q", "learning"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [monitoring]
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: [monitoring]
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:

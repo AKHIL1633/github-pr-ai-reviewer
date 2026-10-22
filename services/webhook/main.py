@@ -22,6 +22,9 @@ async def health():
 
 @app.post("/events", status_code=202)
 async def receive_event(request: Request):
+    if request.headers.get("X-GitHub-Event", "pull_request") != "pull_request":
+        return {"status": "skipped"}
+
     body = await request.json()
     action = body.get("action", "")
     pull_request = body.get("pull_request", {})
@@ -38,7 +41,7 @@ async def receive_event(request: Request):
             )
             pr = result.scalar_one_or_none()
             if pr:
-                trigger_learning.apply_async(args=[repo_full_name, str(pr.id)], queue="learning")
+                trigger_learning(repo_full_name, str(pr.id))
         return {"status": "accepted"}
 
     if action not in ("opened", "reopened", "synchronize"):
