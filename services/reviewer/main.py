@@ -8,6 +8,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
+from formatting import build_inline_comments, build_summary
 from models import Settings, PullRequest, ReviewRequest
 
 settings = Settings()
@@ -23,55 +24,30 @@ async def health():
     return {"status": "ok"}
 
 
-def _finding_summary_line(f: dict) -> str:
-    severity = f.get("severity", "info").upper()
-    return f"**[{severity}]** `{f.get('file', 'unknown')}:{f.get('line', '?')}` ({f.get('agent', '')})\n{f.get('message', '')}\n"
-
-
-def _build_summary(findings: list) -> str:
-    lines = ["## AI Code Review\n"] + [_finding_summary_line(f) for f in findings]
-    return "\n".join(lines)
-
-
 @app.post("/post-review")
 async def post_review(request: ReviewRequest):
-    token = get_installation_token(request.installation_id)
+    token = await get_installation_token(request.installation_id)
 
-    if not request.findings:
-        return {"status": "ok"}
-
-    inline_comments = []
-    for f in request.findings:
-        try:
-            line = int(f.get("line") or 0)
-        except (ValueError, TypeError):
-            line = 0
-        if f.get("file") and line > 0:
-            inline_comments.append({
-                "path": f.get("file"),
-                "line": line,
-                "side": "RIGHT",
-                "body": f"**[{f.get('severity', 'info').upper()}]** ({f.get('agent', '')})\n{f.get('message', '')}",
-            })
-
+    inline_comments = build_inline_comments(request.findings)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.v3+json",
     }
     url = f"https://api.github.com/repos/{request.repo_full_name}/pulls/{request.pr_number}/reviews"
-    summary = _build_summary(request.findings)
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
             url,
-            json={"event": "COMMENT", "body": summary, "comments": inline_comments},
+            json={"event": "COMMENT", "body": build_summary(request.findings), "comments": inline_comments},
             headers=headers,
             timeout=30,
         )
         if response.status_code == 422 and inline_comments:
+            # GitHub rejected a comment position (e.g. the PR was force-pushed meanwhile);
+            # fall back to a single review that lists everything in the body.
             response = await client.post(
                 url,
-                json={"event": "COMMENT", "body": summary},
+                json={"event": "COMMENT", "body": build_summary(request.findings, include_all=True)},
                 headers=headers,
                 timeout=30,
             )
@@ -83,17 +59,17 @@ async def post_review(request: ReviewRequest):
         )
         await session.commit()
 
-    return {"status": "ok"}
+    return {"status": "ok", "inline_comments": len(inline_comments)}
 
 
-def get_installation_token(installation_id: int) -> str:
+async def get_installation_token(installation_id: int) -> str:
     now = int(time.time())
     payload = {"iat": now - 60, "exp": now + 600, "iss": settings.github_app_id}
     private_key = settings.github_app_private_key.replace("\\n", "\n")
     encoded_jwt = jwt.encode(payload, private_key, algorithm="RS256")
 
-    with httpx.Client() as client:
-        response = client.post(
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
             f"https://api.github.com/app/installations/{installation_id}/access_tokens",
             headers={
                 "Authorization": f"Bearer {encoded_jwt}",

@@ -1,6 +1,6 @@
 import hashlib
 import hmac
-
+import os
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -9,6 +9,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from models import Settings
 
 settings = Settings()
+WEBHOOK_URL = os.environ.get("WEBHOOK_SERVICE_URL", "http://webhook:8001")
+FORWARDED_HEADERS = ("X-GitHub-Event", "X-GitHub-Delivery")
+
 app = FastAPI()
 Instrumentator().instrument(app).expose(app)
 
@@ -37,9 +40,12 @@ async def github_webhook(request: Request):
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://webhook:8001/events",
+            f"{WEBHOOK_URL}/events",
             content=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                **{h: request.headers[h] for h in FORWARDED_HEADERS if h in request.headers},
+            },
         )
         response.raise_for_status()
 

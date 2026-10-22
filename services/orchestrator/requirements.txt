@@ -11,3 +11,4 @@ openai
 PyJWT
 cryptography
 prometheus-fastapi-instrumentator
+pgvector
