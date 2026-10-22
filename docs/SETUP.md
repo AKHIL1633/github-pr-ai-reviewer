@@ -662,6 +662,8 @@ For each secret: click "New repository secret", enter the Name and Value, click 
 
 After adding all secrets, you should have **3 secrets** total: `AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`, `EKS_CLUSTER_NAME`.
 
+**Then enable deployments:** go to the "Variables" tab (next to "Secrets"), click "New repository variable", and add `DEPLOY_ENABLED` = `true`. Until this variable exists, the build/push/deploy and Evaluate jobs are skipped, so the repo stays green without AWS.
+
 > **Note — `OPENAI_API_KEY` and `DATABASE_URL` do NOT go here:**
 > The evaluate job runs inside the Kubernetes cluster and reads these values directly from `infra/k8s/secret.yaml` at runtime. They do not need to be GitHub Actions secrets.
 
